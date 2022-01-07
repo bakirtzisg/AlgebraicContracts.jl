@@ -1,0 +1,3 @@
+To run the examples you will need
+to install jupyter
+and IJulia.

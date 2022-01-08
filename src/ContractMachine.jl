@@ -1,4 +1,4 @@
-module StaticContractMachine
+module ContractMachines
 
 #-- Required modules
 # Wiring diagrams
@@ -17,8 +17,11 @@ using PrettyTables
 using Printf
 
 # Static contracts
-include("AlgebraicContracts.jl")
-using .StaticContracts
+include("StaticContracts.jl")
+using .StaticContracts	# Must have period as submodule
+
+#-- Information accesible by using module
+export ContractMachine, oapply, check_contract, ODEProblem
 
 #-- Datatypes used by contract machine
 const ContractOutputTable = Dict{KEY, NamedTuple{ (:input, :output),
@@ -269,6 +272,4 @@ function ODEProblem(m::ContractMachine{T}, u0::AbstractVector, xs::AbstractVecto
     ODEProblem(m.machine, u0, xs, tspan, p)
 end
 
-#-- Information accesible by using module
-export ContractMachine, oapply, check_contract, ODEProblem
-end
+end # module

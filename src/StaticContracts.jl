@@ -11,33 +11,74 @@ using IntervalSets
 #-- Accessible functions
 export StaticContract, oapply
 
-#-- Datatype that accepts all bound conditions
-const NInterval = Vector{ Union{ClosedInterval{T},
-                                OpenInterval{T},
-                                Interval{:open, :closed, T},
-                                Interval{:closed, :open, T} } } where T<:Real
-
 #-- Contracts are defined via intervals:
 struct StaticContract{T<:Real}
-    ninputs::Int
-    noutputs::Int
-    input::NInterval{T}
-    output::NInterval{T}
+    input::Vector{Interval}
+    output::Vector{Interval}
 
     # Constructor
     function StaticContract{T}(input::Vector, output::Vector) where T<:Real
-        ninputs = length(input)
-        noutputs = length(output)
-
         # cannot have empty contract
         for contract in [input; output]
             if isempty(contract)
-                error("the interval $contract is backwards")
+                error("the interval $contract is empty or backwards")
             end
         end
 
-        new{T}(ninputs, noutputs, input, output)
+        new{T}(input, output)
     end
+end
+
+
+#-- Display struct as product of intervals:
+function formatInterval(contract::Interval) 
+    # Switch symbol for infinity
+    if -contract.left == contract.right == Inf
+        output = "ℝ"
+    else
+        # check left bound
+        if( contract.left == -Inf )
+            left = "-∞"
+            lbracket = "("
+        else
+            left = contract.left
+            lbracket = isleftopen(contract) ? "(" : "["
+        end
+
+        # check right bound
+        if( contract.right == Inf )
+            right = "∞"
+            rbracket = ")"
+        else
+            right = contract.right
+            rbracket = isrightopen(contract) ? ")" : "]"
+        end    
+
+        # Concatenate strings
+        output = "$lbracket" * "$left,$right" * "$rbracket"
+    end
+    return output
+end
+
+function Base.show(io::IO, vf::StaticContract)
+    # Check all contracts
+    list = [vf.input; vf.output]
+    output = ""
+
+    # iterate across all contracts
+    len = length(list)
+
+    for i in 1:len
+        contract = list[i]
+        output *= formatInterval(contract)
+        # add product operator [spaces make it easier to read]
+        if i != len
+            output *= " × "
+        end
+    end
+
+    # display combined string
+    print("StaticContract( $output )")
 end
 
 #-- Compose contracts with diagram: DWDDynam.
@@ -49,40 +90,52 @@ function oapply(d::WiringDiagram, ms::Vector{StaticContract{T}}) where T
     if nboxes(d) != length(ms)
         error("there are $nboxes(d) boxes but $length(ms) machines")
     end
-    # each wire must have a contract
+    
+    # Each wire must have a contract
     for id in 1:nboxes(d)
-        b = box[id]
-        if length(b.input_ports) != ms[id].ninputs || length(b.output_ports) != ms[id].noutputs
-            name = b.value
-            error("number of ports do not match number of contracts at box $name")
+        curr_box = box[id]
+        if length(curr_box.input_ports) != length(ms[id].input) || length(curr_box.output_ports) != length(ms[id].output)
+            name = curr_box.value
+            error("number of ports do not match number of contracts at $name (id=$id)")
         end
     end
 
     # Check all contracts inside the diagram (excluding wires that enter or exit the diagram)
     for w in wires(d, :Wire)
-        # Variable names, see section 3.3.3, P.16
-        target_var = box[w.target.box].input_ports[w.target.port]
-        source_var = box[w.source.box].output_ports[w.source.port]
-
-        # ensure target and source name match.
-        if target_var != source_var
-            error("variable names do not match at $w")
-        end
-
-        # Induced contract, see section 3.3.1, P.13
+        # id number of boxes
+        source_id = w.source.box
+        target_id = w.target.box
         # box names
-        source_name = box[w.source.box].value
-        target_name = box[w.target.box].value
-
-        # check if source contract is compatible with target contract
-        contract_source = ms[w.source.box].output[w.source.port]
-        contract_target = ms[w.target.box].input[w.target.port]
+        source_name = box[source_id].value
+        target_name = box[target_id].value
+        
+        # 1. Variable names, see section 3.3.3, P.16
+        source_var = box[source_id].output_ports[w.source.port]
+        target_var = box[target_id].input_ports[w.target.port]
+        
+            # ensure target and source name match.
+        if target_var != source_var
+            error("wire \"$target_var\" of $source_name (id=$source_id) does not match wire \"$source_var\" of $target_name (id=$target_id)")
+        end
+        
+        # 2. Induced contract, see section 3.3.1, P.13
+        contract_source = ms[source_id].output[w.source.port]
+        contract_target = ms[target_id].input[w.target.port]
         overlap = intersect(contract_source, contract_target)
 
+            # check if source contract is compatible with target contract
         if isempty(overlap) == true
-            error("contract $contract_source of $source_name does not satisfy contract $contract_target of $target_name at wire $target_var")
+            format_source = formatInterval(contract_source)  
+            format_target = formatInterval(contract_target)
+            error("Incompatible contract between $source_name (id=$source_id) and $target_name (id=$target_id) at wire \"$target_var\":
+                    $format_source ∩ $format_target = ∅")
+            
+            # Check for undefined behavior
         elseif overlap != contract_source
-            println("WARNING: contract $contract_source of $source_name lies outside contract $contract_target of $target_name at wire $target_var")
+            format_source = formatInterval(contract_source)
+            format_target = formatInterval(contract_target)
+            println("WARNING! undefined contract between $source_name (id=$source_id) and $target_name (id=$target_id) at wire \"$target_var\":
+                    $format_source ∩ $format_target ≠ $format_source")
         end
     end
 
@@ -97,35 +150,6 @@ end
 # Compose using a library DWDDynam.
 function oapply(d::WiringDiagram, ms::Dict{Symbol, StaticContract{T}}) where T
     oapply(d, map(box -> ms[box.value], boxes(d)) )
-end
-
-#-- Display struct as product of intervals:
-function Base.show(io::IO, vf::StaticContract)
-    # Check all contracts
-    list = [vf.input; vf.output]
-    output = ""
-
-    # iterate across all contracts
-    len = length(list)
-
-    for i in 1:len
-        contract = list[i]
-        # Switch symbol for infinity
-        if -contract.left == contract.right == Inf
-            output *= "ℝ"
-        else
-            left = contract.left == -Inf ? "-∞" : contract.left
-            right = contract.right == Inf ? "∞"  : contract.right
-            output *= "[$left,$right]"
-        end
-        # add product operator [spaces make it easier to read]
-        if i != len
-            output *= " × "
-        end
-    end
-
-    # display combined string
-    print("StaticContract( $output )")
 end
 
 end # module

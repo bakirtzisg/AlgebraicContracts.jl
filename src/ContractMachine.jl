@@ -212,6 +212,7 @@ end
 # display contract machines as product of intervals
 function Base.show(io::IO, vf::ContractMachine)
     display(vf.static_contract)
+    print("[Machine]") 		# Indicate it's a machine
 end
 
 # display contract tables (output of fcontract and eval_contract) as a pretty table

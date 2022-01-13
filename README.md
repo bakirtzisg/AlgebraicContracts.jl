@@ -1,3 +1,6 @@
+<p align="center"><img src=".github/logo.png" width="200" /></p>
+<p align="center"><strong>AlgebraicContracts.jl</strong> Compositional contract-based design.</p>
+
 # Instructions
 
 ### How to run examples:

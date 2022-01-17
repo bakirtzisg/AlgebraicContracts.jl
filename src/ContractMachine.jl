@@ -1,4 +1,4 @@
-module ContractMachines
+module ContractedMachines
 
 #-- Required modules
 # Wiring diagrams
@@ -21,7 +21,7 @@ include("StaticContracts.jl")
 using .StaticContracts	# Must have period as submodule
 
 #-- Information accesible by using module
-export ContractMachine, oapply, check_contract, ODEProblem
+export ContractedMachine, oapply, check_contract, ODEProblem
 
 #-- Datatypes used by contract machine
 const ContractOutputTable = Dict{KEY, NamedTuple{ (:input, :output),
@@ -40,13 +40,13 @@ struct ContractTable
 end
 
 #-- Contracts are defined via intervals
-struct ContractMachine{T<:Real}
+struct ContractedMachine{T<:Real}
     static_contract::StaticContract{T}
     machine::AbstractMachine{T}
     fcontract::Function
 
     # inner constructor
-    function ContractMachine{T}(static_contract::StaticContract{T}, machine::AbstractMachine{T};
+    function ContractedMachine{T}(static_contract::StaticContract{T}, machine::AbstractMachine{T};
                                 fcontract = nothing) where T<:Real
         # contract function
         # Only define function in none is provided, used to not overwrite the composed function from oapply
@@ -66,7 +66,7 @@ struct ContractMachine{T<:Real}
 end
 
 # outer constructor
-function ContractMachine{T}(cinput::Vector, nstates::Int, coutput::Vector,
+function ContractedMachine{T}(cinput::Vector, nstates::Int, coutput::Vector,
                             dynamics::Function, readout::Function;
                             fcontract = nothing, mtype = :continuous) where T<:Real
     # contracts
@@ -83,12 +83,12 @@ function ContractMachine{T}(cinput::Vector, nstates::Int, coutput::Vector,
         machine = DiscreteMachine{T}(ninputs, nstates, noutputs, dynamics, readout)
     end
     # make a machine using inner constructor
-    ContractMachine{T}(static_contract, machine, fcontract=fcontract )
+    ContractedMachine{T}(static_contract, machine, fcontract=fcontract )
 end
 
 #-- Compose multiple contract machines --
 
-function oapply(d::WiringDiagram, ms::Vector{ContractMachine{T}}) where T<:Real
+function oapply(d::WiringDiagram, ms::Vector{ContractedMachine{T}}) where T<:Real
     # compose contracts
     static_contract = StaticContracts.oapply(d, map(m -> m.static_contract, ms))
 
@@ -144,7 +144,7 @@ function oapply(d::WiringDiagram, ms::Vector{ContractMachine{T}}) where T<:Real
     machine = DWDDynam.oapply(d, map(m -> m.machine, ms))
 
     # return the composed machine
-    return ContractMachine{T}(static_contract, machine, fcontract=fcontract)
+    return ContractedMachine{T}(static_contract, machine, fcontract=fcontract)
 end
 
 # Identify during which time intervals a signal is zero [false == contract is violated]
@@ -178,7 +178,7 @@ function failureInterval(arr::AbstractVector, time=nothing, out_type="time")
 end
 
 # Assign contract failure times to each wire of each box
-function check_contract(sol::T1, machine::ContractMachine{T2}, x0::AbstractVector, p=nothing, t=0;
+function check_contract(sol::T1, machine::ContractedMachine{T2}, x0::AbstractVector, p=nothing, t=0;
                         out_type="time" ) where {T1<:ODESolution, T2<:Real}
 
     # evalutate the contract function throughout time interval
@@ -210,7 +210,7 @@ end
 #-- Pretty printing of output
 
 # display contract machines as product of intervals
-function Base.show(io::IO, vf::ContractMachine)
+function Base.show(io::IO, vf::ContractedMachine)
     display(vf.static_contract)
     print("[Machine]") 		# Indicate it's a machine
 end
@@ -264,12 +264,12 @@ end
 #-- helper functions
 
 # compose machines given the name of each box
-function oapply(d::WiringDiagram, ms::Dict{Symbol, ContractMachine{T}}) where T<:Real
+function oapply(d::WiringDiagram, ms::Dict{Symbol, ContractedMachine{T}}) where T<:Real
     oapply(d, map(box -> ms[box.value], boxes(d)) )
 end
 
 # solve the dynamics of the contract machines
-function ODEProblem(m::ContractMachine{T}, u0::AbstractVector, xs::AbstractVector, tspan::Tuple, p=nothing) where T<:Real
+function ODEProblem(m::ContractedMachine{T}, u0::AbstractVector, xs::AbstractVector, tspan::Tuple, p=nothing) where T<:Real
     ODEProblem(m.machine, u0, xs, tspan, p)
 end
 

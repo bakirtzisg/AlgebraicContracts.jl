@@ -1,0 +1,4 @@
+#+html: <p align="center"><img src=".github/logo.png" width="200" /></p>
+#+html: <p align="center"><strong>AlgebraicContracts.jl</strong> Compositional contract-based design.</p>
+
+=AlgebraicContracts.jl= is a Julia library for adding contacts compositionally to [[https://github.com/AlgebraicJulia/AlgebraicDynamics.jl][AlgebraicDynamics.jl]] models. This library implements the algebra of contracts from "[[https://doi.org/10.1145/3461669][Categorical Semantics of Cyber-Physical Systems Theory]]" and relies on [[https://github.com/AlgebraicJulia/Catlab.jl][Catlab.jl]] to build a computational interpretation of the categorical formalism.

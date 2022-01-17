@@ -2,6 +2,6 @@ module AlgebraicContracts
 
 # Submodules
 include("StaticContracts.jl")
-include("ContractMachine.jl")
+include("ContractedMachine.jl")
 
 end # module

@@ -5,7 +5,7 @@ module ContractedMachines
 using AlgebraicDynamics
 using AlgebraicDynamics.DWDDynam
 using Catlab.WiringDiagrams
-import AlgebraicDynamics: oapply
+import AlgebraicDynamics: oapply, readout, eval_dynamics
 
 # ode solver
 using DifferentialEquations
@@ -34,13 +34,18 @@ const ContractTimeTable = Dict{Any, Any}
 const ContractOutputBox = NamedTuple{ (:input, :output),
                                       Tuple{ Vector{Bool}, Vector{Bool} } }
 
+# Abstract types
+#abstract type AbstractContractMachine{T,I,S} <: AbstractMachine{T,I,S} end
+
 #-- Type to display pretty table
 struct ContractTable
     table::Union{ContractOutputTable, ContractTimeTable, ContractOutputBox}
 end
 
+#<: AbstractContractMachine{T}
+
 #-- Contracts are defined via intervals
-struct ContractedMachine{T<:Real}
+struct ContractedMachine{T<:Real} #<: AbstractContractMachine{T,I,S}
     static_contract::StaticContract{T}
     machine::AbstractMachine{T}
     fcontract::Function
@@ -48,20 +53,26 @@ struct ContractedMachine{T<:Real}
     # inner constructor
     function ContractedMachine{T}(static_contract::StaticContract{T}, machine::AbstractMachine{T};
                                 fcontract = nothing) where T<:Real
-        # contract function
-        # Only define function in none is provided, used to not overwrite the composed function from oapply
+        # contract evaluation function
         if fcontract == nothing
-            fcontract = (u::AbstractVector, x::AbstractVector, p=nothing, t=0) -> begin
+            # Only define function in none is provided
+            function fbox(u::AbstractVector, xs::AbstractVector, p=nothing, t=0)
+                # evaluate functional inputs
+                x = map(x -> typeof(x) <: Function ? x(t) : x, xs) 
+                
                 # check whether contracts at input ports are satisfied
                 Rin = map( (xin,cont) -> xin in cont, x, static_contract.input )
 
                 # check whether contracts at output ports are satisfied
-                Rout = map( (rout,cont) -> rout in cont, readout(machine)(u, p, t), static_contract.output )
+                Rout = map( (rout,cont) -> rout in cont, readout(machine, u, p, t), static_contract.output )
                 return ContractTable( (input = Rin, output = Rout) )
             end
-        end
+        
         # make a new machine satisfying these restrictions
-        new{T}(static_contract, machine, fcontract)
+            new{T}(static_contract, machine, fbox)
+        else
+            new{T}(static_contract, machine, fcontract)
+        end
     end
 end
 
@@ -86,6 +97,15 @@ function ContractedMachine{T}(cinput::Vector, nstates::Int, coutput::Vector,
     ContractedMachine{T}(static_contract, machine, fcontract=fcontract )
 end
 
+#-- Getter functions --
+function eval_dynamics(f::ContractedMachine, u, xs, p=nothing, t=0) 
+    return eval_dynamics(f.machine, u, xs, p, t)
+end
+
+function readout(f::ContractedMachine, u, p=nothing, t=0)
+    return readout(f.machine, u, p, t)
+end
+
 #-- Compose multiple contract machines --
 
 function oapply(d::WiringDiagram, ms::Vector{ContractedMachine{T}}) where T<:Real
@@ -108,7 +128,7 @@ function oapply(d::WiringDiagram, ms::Vector{ContractedMachine{T}}) where T<:Rea
     #---- Evaluate contracts
     function fcontract(u::AbstractVector, x::AbstractVector, p=nothing, t=0)
         # get the output of each box
-        rout = map( id -> readout(ms[id].machine)( u[index[id]], p, t ), 1:nboxes(d) )
+        rout = map( id -> readout(ms[id], u[index[id]], p, t ), 1:nboxes(d) )
 
         # evaluate the contract function
         fout = Array{Dict}(undef, nboxes(d))
@@ -121,7 +141,14 @@ function oapply(d::WiringDiagram, ms::Vector{ContractedMachine{T}}) where T<:Rea
                 if w.source.box != input_id(d)      # iternal inputs use are the readout of another box
                     xin[w.target.port] += rout[w.source.box][w.source.port]
                 else                                # external inputs make use of a given vector
-                    xin[w.target.port] += x[w.source.port]
+                    x_source = x[w.source.port]
+                    
+                    # check for function input
+                    if typeof(x_source) <: Function
+                        xin[w.target.port] += x_source(t)
+                    else
+                        xin[w.target.port] += x_source
+                    end
                 end
             end
 
@@ -148,7 +175,7 @@ function oapply(d::WiringDiagram, ms::Vector{ContractedMachine{T}}) where T<:Rea
 end
 
 # Identify during which time intervals a signal is zero [false == contract is violated]
-function failureInterval(arr::AbstractVector, time=nothing, out_type="time")
+function failureInterval(arr::AbstractVector, time=nothing, output="time")
     # check each element in the array
     index = Array{Tuple}(undef, 0)
     start = 1
@@ -169,7 +196,7 @@ function failureInterval(arr::AbstractVector, time=nothing, out_type="time")
     end
 
     # map indeces to given array
-    if time != nothing && out_type == "time"
+    if time != nothing && output == "time"
         index = map( set -> (time[set[1]], time[set[2]]), index)
     end
 
@@ -178,8 +205,9 @@ function failureInterval(arr::AbstractVector, time=nothing, out_type="time")
 end
 
 # Assign contract failure times to each wire of each box
-function check_contract(sol::T1, machine::ContractedMachine{T2}, x0::AbstractVector, p=nothing, t=0;
-                        out_type="time" ) where {T1<:ODESolution, T2<:Real}
+function check_contract(sol::T1, machine::ContractedMachine{T2}, 
+                        x0::AbstractVector, p=nothing, t=0;
+                        output="time" ) where {T1<:ODESolution, T2<:Real}
 
     # evalutate the contract function throughout time interval
     fout = map( t -> machine.fcontract(sol(t), x0, p, t), sol.t )
@@ -193,10 +221,10 @@ function check_contract(sol::T1, machine::ContractedMachine{T2}, x0::AbstractVec
     for key in keys(set0)
         # function to map indeces of contract outputs
         mapOut = index -> map(i -> set0[key][index][i].first => begin
-                              # array of the contract state for each time step
-                              contract = map(set -> set.table[key][index][i].second, fout);
-                              # find the duration of 0's in the array
-                              failureInterval(contract, sol.t, out_type);
+                                  # array of the contract state for each time step
+                                  contract = map(set -> set.table[key][index][i].second, fout);
+                                  # find the duration of 0's in the array
+                                  failureInterval(contract, sol.t, output);
                               end,
                               1:length(set0[key][index]) )
         # store the times at the directory
@@ -245,7 +273,7 @@ function Base.show(io::IO, data::ContractTable)
                                            # Note: need way to change formatting for intergers
                                            out = map( pair ->
                                                       map( set -> @sprintf("%s : %f , %f", pair.first, set...), pair.second ),
-                                                      value[index] );
+                                                 value[index] );
 
                                            # combine strings into large string seperated by line jumps
                                            join( vcat(out...), "\n")

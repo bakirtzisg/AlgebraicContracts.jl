@@ -127,14 +127,14 @@ function oapply(d::WiringDiagram, ms::Vector{StaticContract{T}}) where T
         if isempty(overlap) == true
             format_source = formatInterval(contract_source)  
             format_target = formatInterval(contract_target)
-            error("Incompatible contract between $source_name (id=$source_id) and $target_name (id=$target_id) at wire \"$target_var\":
+            error("Contract between $source_name (id=$source_id) and $target_name (id=$target_id) at wire \"$target_var\" does not overlap:
                     $format_source ∩ $format_target = ∅")
             
             # Check for undefined behavior
         elseif overlap != contract_source
             format_source = formatInterval(contract_source)
             format_target = formatInterval(contract_target)
-            println("WARNING! undefined contract between $source_name (id=$source_id) and $target_name (id=$target_id) at wire \"$target_var\":
+            println("Note: intervals do not overlap between $source_name (id=$source_id) and $target_name (id=$target_id) at wire \"$target_var\":
                     $format_source ∩ $format_target ≠ $format_source")
         end
     end

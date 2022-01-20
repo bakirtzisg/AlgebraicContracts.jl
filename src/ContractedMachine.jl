@@ -34,18 +34,19 @@ const ContractTimeTable = Dict{Any, Any}
 const ContractOutputBox = NamedTuple{ (:input, :output),
                                       Tuple{ Vector{Bool}, Vector{Bool} } }
 
-# Abstract types
-#abstract type AbstractContractMachine{T,I,S} <: AbstractMachine{T,I,S} end
+# Type inheritance [still needs work]
+#struct AbstractContractMachine{T, I, S} <: AbstractMachine{T, I, S} 
+#    interface::I
+#    systemType::S 
+#end 
 
 #-- Type to display pretty table
 struct ContractTable
     table::Union{ContractOutputTable, ContractTimeTable, ContractOutputBox}
 end
 
-#<: AbstractContractMachine{T}
-
 #-- Contracts are defined via intervals
-struct ContractedMachine{T<:Real} #<: AbstractContractMachine{T,I,S}
+struct ContractedMachine{T} 
     static_contract::StaticContract{T}
     machine::AbstractMachine{T}
     fcontract::Function

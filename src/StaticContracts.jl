@@ -9,7 +9,7 @@ import Catlab.WiringDiagrams: oapply  # Needed to overwrite oapply function
 using IntervalSets
 
 #-- Accessible functions
-export StaticContract, oapply
+export StaticContract, oapply, StaticContractDict
 
 #-- Contracts are defined via intervals:
 struct StaticContract{T<:Real}
@@ -24,7 +24,6 @@ struct StaticContract{T<:Real}
                 error("the interval $contract is empty or backwards")
             end
         end
-
         new{T}(input, output)
     end
 end
@@ -76,22 +75,34 @@ function Base.show(io::IO, vf::StaticContract)
             output *= " × "
         end
     end
-
     # display combined string
     print("StaticContract( $output )")
 end
 
-#-- Compose contracts with diagram: DWDDynam.
+#-- Compose contracts with diagram: 
 function oapply(d::WiringDiagram, ms::Vector{StaticContract{T}}) where T
     # boxes in diagram
     box = boxes(d)
 
     # Ensure machines fill diagram
-    if nboxes(d) != length(ms)
+    n_contract = length(ms)
+    
+    if nboxes(d) != n_contract
         error("there are $nboxes(d) boxes but $length(ms) machines")
     end
     
-    # Each wire must have a contract
+    # Boxes must have unique names to be identified
+    if n_contract > 1 
+        name = map( m -> m.value, box )
+        for i in 1:(n_contract-1)
+            curr_name = name[i]
+            if curr_name in name[ (i+1):n_contract ]
+                error("Two or more boxes share the name: $curr_name")
+            end
+        end
+    end
+    
+    # Each wire must have a contract 
     for id in 1:nboxes(d)
         curr_box = box[id]
         if length(curr_box.input_ports) != length(ms[id].input) || length(curr_box.output_ports) != length(ms[id].output)
@@ -115,27 +126,29 @@ function oapply(d::WiringDiagram, ms::Vector{StaticContract{T}}) where T
         
             # ensure target and source name match.
         if target_var != source_var
-            error("wire \"$target_var\" of $source_name (id=$source_id) does not match wire \"$source_var\" of $target_name (id=$target_id)")
+            error("wire \"$target_var\" of $source_name (id=$source_id) " * 
+                  "does not match wire \"$source_var\" of $target_name (id=$target_id)")
         end
         
         # 2. Induced contract, see section 3.3.1, P.13
-        contract_source = ms[source_id].output[w.source.port]
+        contract_source = ms[source_id].output[w.source.port] 
         contract_target = ms[target_id].input[w.target.port]
         overlap = intersect(contract_source, contract_target)
+        
+        format_source = formatInterval(contract_source)
+        format_target = formatInterval(contract_target)
 
             # check if source contract is compatible with target contract
         if isempty(overlap) == true
-            format_source = formatInterval(contract_source)  
-            format_target = formatInterval(contract_target)
-            error("Contract between $source_name (id=$source_id) and $target_name (id=$target_id) at wire \"$target_var\" does not overlap:
-                    $format_source ∩ $format_target = ∅")
+            error("Incompatible contract between $source_name (id=$source_id) " * 
+                  "and $target_name (id=$target_id) at wire \"$target_var\": " * 
+                  "$format_source ∩ $format_target = ∅")
             
             # Check for undefined behavior
         elseif overlap != contract_source
-            format_source = formatInterval(contract_source)
-            format_target = formatInterval(contract_target)
-            println("Note: intervals do not overlap between $source_name (id=$source_id) and $target_name (id=$target_id) at wire \"$target_var\":
-                    $format_source ∩ $format_target ≠ $format_source")
+            println("Note: intervals do not overlap between $source_name (id=$source_id) " * 
+                    "and $target_name (id=$target_id) at wire \"$target_var\": " *
+                    "$format_source ∩ $format_target ≠ $format_source")
         end
     end
 
@@ -147,9 +160,30 @@ function oapply(d::WiringDiagram, ms::Vector{StaticContract{T}}) where T
     return StaticContract{T}(input, output)
 end
 
-# Compose using a library DWDDynam.
-function oapply(d::WiringDiagram, ms::Dict{Symbol, StaticContract{T}}) where T
-    oapply(d, map(box -> ms[box.value], boxes(d)) )
+# Compose using a library 
+const StaticContractDict{T} = Dict{ Symbol, StaticContract{T} }
+
+function oapply(d::WiringDiagram, ms::StaticContractDict{T}) where T
+    box = boxes(d)
+    name_contract = keys(ms)
+    
+    # add unassigned contracts
+    if length(box) != length(name_contract)
+        for b in box
+            name = b.value
+            if !(name in name_contract)
+                # create default box
+                n_input = length(b.input_ports)
+                n_output = length(b.output_ports)
+                default_contract = StaticContract{T}(repeat([-Inf..Inf], n_input), 
+                                                     repeat([-Inf..Inf], n_output) )
+                # add to dictionary
+                ms[name] = default_contract
+            end
+        end
+    end
+    # compose with array 
+    oapply(d, map(box -> ms[box.value], box) )
 end
 
 end # module

@@ -146,7 +146,7 @@ function oapply(d::WiringDiagram, ms::Vector{StaticContract{T}}) where T
             
             # Check for undefined behavior
         elseif overlap != contract_source
-            println("Note: intervals do not overlap between $source_name (id=$source_id) " * 
+            println("Intervals do not overlap between $source_name (id=$source_id) " * 
                     "and $target_name (id=$target_id) at wire \"$target_var\": " *
                     "$format_source ∩ $format_target ≠ $format_source")
         end

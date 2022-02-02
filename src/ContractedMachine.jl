@@ -5,7 +5,7 @@ module ContractedMachines
 using AlgebraicDynamics
 using AlgebraicDynamics.DWDDynam
 using Catlab.WiringDiagrams
-import AlgebraicDynamics: oapply, readout, eval_dynamics
+import AlgebraicDynamics: oapply
 
 # ode solver
 using DifferentialEquations
@@ -34,53 +34,48 @@ const ContractTimeTable = Dict{Any, Any}
 const ContractOutputBox = NamedTuple{ (:input, :output),
                                       Tuple{ Vector{Bool}, Vector{Bool} } }
 
-# Type inheritance [still needs work]
-#struct AbstractContractMachine{T, I, S} <: AbstractMachine{T, I, S} 
-#    interface::I
-#    systemType::S 
-#end 
-
 #-- Type to display pretty table
 struct ContractTable
     table::Union{ContractOutputTable, ContractTimeTable, ContractOutputBox}
 end
 
-#-- Contracts are defined via intervals
-struct ContractedMachine{T} 
-    static_contract::StaticContract{T}
-    machine::AbstractMachine{T}
+#-- Type inheritance from AlgebraicDynamics
+struct AbstractContractMachine{T, I, S} <: AbstractMachine{T, I, S} 
+    contract::S
+    machine::I
     fcontract::Function
+end 
 
-    # inner constructor
-    function ContractedMachine{T}(static_contract::StaticContract{T}, machine::AbstractMachine{T};
-                                fcontract = nothing) where T<:Real
-        # contract evaluation function
-        if fcontract == nothing
-            # Only define function in none is provided
-            function fbox(u::AbstractVector, xs::AbstractVector, p=nothing, t=0)
-                # evaluate functional inputs
-                x = map(x -> typeof(x) <: Function ? x(t) : x, xs) 
-                
-                # check whether contracts at input ports are satisfied
-                Rin = map( (xin,cont) -> xin in cont, x, static_contract.input )
+#-- Contracts are defined via intervals
+const ContractedMachine{T} = AbstractContractMachine{ T, AbstractMachine{T}, StaticContract{T} }
 
-                # check whether contracts at output ports are satisfied
-                Rout = map( (rout,cont) -> rout in cont, readout(machine, u, p, t), static_contract.output )
-                return ContractTable( (input = Rin, output = Rout) )
-            end
-        
-        # make a new machine satisfying these restrictions
-            new{T}(static_contract, machine, fbox)
-        else
-            new{T}(static_contract, machine, fcontract)
+function ContractedMachine{T}(static_contract::StaticContract{T}, machine::AbstractMachine{T};
+                            fcontract = nothing) where T
+    # contract evaluation function
+    if fcontract == nothing
+        # Only define function in none is provided
+        function fbox(u::AbstractVector, xs::AbstractVector, p=nothing, t=0)
+            # evaluate functional inputs
+            x = map(x -> typeof(x) <: Function ? x(t) : x, xs) 
+
+            # check whether contracts at input ports are satisfied
+            Rin = map( (xin,cont) -> xin in cont, x, static_contract.input )
+
+            # check whether contracts at output ports are satisfied
+            Rout = map( (rout,cont) -> rout in cont, DWDDynam.readout(machine, u, p, t), static_contract.output )
+            return ContractTable( (input = Rin, output = Rout) )
         end
+
+    # make a new machine satisfying these restrictions
+        return ContractedMachine{T}(static_contract, machine, fbox)
+    else
+        return ContractedMachine{T}(static_contract, machine, fcontract) 
     end
 end
 
-# outer constructor
 function ContractedMachine{T}(cinput::Vector, nstates::Int, coutput::Vector,
                             dynamics::Function, readout::Function;
-                            fcontract = nothing, mtype = :continuous) where T<:Real
+                            fcontract = nothing, mtype = :continuous) where T
     # contracts
     static_contract = StaticContract{T}(cinput, coutput)
 
@@ -95,23 +90,23 @@ function ContractedMachine{T}(cinput::Vector, nstates::Int, coutput::Vector,
         machine = DiscreteMachine{T}(ninputs, nstates, noutputs, dynamics, readout)
     end
     # make a machine using inner constructor
-    ContractedMachine{T}(static_contract, machine, fcontract=fcontract )
+    return ContractedMachine{T}(static_contract, machine, fcontract=fcontract )
 end
 
 #-- Getter functions --
-function eval_dynamics(f::ContractedMachine, u, xs, p=nothing, t=0) 
-    return eval_dynamics(f.machine, u, xs, p, t)
+function eval_dynamics(f::ContractedMachine{T}, u, xs, p=nothing, t=0) where T<:Real
+    return DWDDynam.eval_dynamics(f.machine, u, xs, p, t)
 end
 
 function readout(f::ContractedMachine, u, p=nothing, t=0)
-    return readout(f.machine, u, p, t)
+    return DWDDynam.readout(f.machine, u, p, t)
 end
 
 #-- Compose multiple contract machines --
 
 function oapply(d::WiringDiagram, ms::Vector{ContractedMachine{T}}) where T<:Real
     # compose contracts
-    static_contract = StaticContracts.oapply(d, map(m -> m.static_contract, ms))
+    static_contract = StaticContracts.oapply(d, map(m -> m.contract, ms))
 
     # Get the initial index of the state vector of each each box.
     # The composition concatenates these vectors into a single column.
@@ -129,7 +124,7 @@ function oapply(d::WiringDiagram, ms::Vector{ContractedMachine{T}}) where T<:Rea
     #---- Evaluate contracts
     function fcontract(u::AbstractVector, x::AbstractVector, p=nothing, t=0)
         # get the output of each box
-        rout = map( id -> readout(ms[id], u[index[id]], p, t ), 1:nboxes(d) )
+        rout = map( id -> ContractedMachines.readout(ms[id], u[index[id]], p, t ), 1:nboxes(d) )
 
         # evaluate the contract function
         fout = Array{Dict}(undef, nboxes(d))
@@ -139,7 +134,7 @@ function oapply(d::WiringDiagram, ms::Vector{ContractedMachine{T}}) where T<:Rea
             xin = zeros( ninputs(ms[id].machine) )
 
             for w in in_wires(d, id)                # check all wires going into a box
-                if w.source.box != input_id(d)      # iternal inputs use are the readout of another box
+                if w.source.box != input_id(d)      # internal inputs use are the readout of another box
                     xin[w.target.port] += rout[w.source.box][w.source.port]
                 else                                # external inputs make use of a given vector
                     x_source = x[w.source.port]
@@ -200,7 +195,6 @@ function failureInterval(arr::AbstractVector, time=nothing, output="time")
     if time != nothing && output == "time"
         index = map( set -> (time[set[1]], time[set[2]]), index)
     end
-
     # output 2d array of start and stop times
     return index
 end
@@ -240,7 +234,7 @@ end
 
 # display contract machines as product of intervals
 function Base.show(io::IO, vf::ContractedMachine)
-    display(vf.static_contract)
+    display(vf.contract)
     print("[Machine]") 		# Indicate it's a machine
 end
 
